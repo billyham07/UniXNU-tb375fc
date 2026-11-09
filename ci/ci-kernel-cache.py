@@ -26,6 +26,9 @@ from unixnu.cli import cmd_status, parser as unixnu_parser  # noqa: E402
 from unixnu.config import Context  # noqa: E402
 
 
+PAYLOAD_ONLY = ('adt', 'payload', 'userdata', 'root', 'device_tree', 'firmware')
+
+
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -115,8 +118,9 @@ def make_key():
                  'scripts/build-xnu-4k-baseline.sh', 'scripts/prepare-xnu-source.py'):
         builders[name] = file_digest(ROOT / name)
     base = {
-        'schema': 4,
-        'board': status['board'],
+        'schema': 5,
+        # Payload/ADT/firmware tables do not reach the XNU build; editing them must not force a cold bootstrap.
+        'board': {k: v for k, v in status['board'].items() if k not in PAYLOAD_ONLY},
         'components': status['components'],
         'config': file_digest(ctx.config_path),
         'patches': patches,
