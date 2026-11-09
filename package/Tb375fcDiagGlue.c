@@ -39,7 +39,7 @@ extern uintptr_t ml_io_map(uintptr_t pa, uintptr_t size);
 #define WDT_PA          0x1C00A000u
 #define WDT_RESTART     0x08u
 #define WDT_RESTART_KEY 0x1971u
-#define WDT_PET_SECONDS 120u
+#define WDT_PET_SECONDS 240u
 static uintptr_t wdt;
 
 void tb375fc_glue_init(void);
@@ -50,6 +50,9 @@ void tb375fc_glue_msgbuf(char);
 void tb375fc_glue_process(int, const char *, const char *);
 void tb375fc_glue_exit(int, const char *, int, unsigned, uint64_t);
 void tb375fc_glue_panic(int);
+void tb375fc_glue_user_fault(int, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+void tb375fc_glue_critical_exit(int, const char *);
+void tb375fc_glue_syscall(int, const char *, unsigned, int, int);
 
 #define PANIC_TAIL 16384u
 
@@ -130,10 +133,44 @@ tb375fc_glue_putc(char c)
 	tb375fc_diag_putc(c);
 }
 
+static char mline[192];
+static unsigned mlen;
+static uint32_t nag_lines;
+
+static bool
+line_has(const char *line, unsigned len, const char *needle)
+{
+	unsigned n = 0;
+	while (needle[n]) {
+		n++;
+	}
+	for (unsigned i = 0; i + n <= len; i++) {
+		unsigned j = 0;
+		while (j < n && line[i + j] == needle[j]) {
+			j++;
+		}
+		if (j == n) {
+			return true;
+		}
+	}
+	return false;
+}
+
 void
 tb375fc_glue_msgbuf(char c)
 {
-	tb375fc_diag_msgbuf_putc(c);
+	mline[mlen++] = c;
+	if (c != '\n' && mlen < sizeof(mline)) {
+		return;
+	}
+	if (line_has(mline, mlen, "handleNagTimerExpiry") && nag_lines++ >= 2) {
+		mlen = 0;
+		return;
+	}
+	for (unsigned i = 0; i < mlen; i++) {
+		tb375fc_diag_msgbuf_putc(mline[i]);
+	}
+	mlen = 0;
 }
 
 void
@@ -165,6 +202,130 @@ tb375fc_glue_exit(int pid, const char *name, int rv, unsigned ns, uint64_t code)
 }
 
 static void
+put_hex(uint64_t v)
+{
+	put_str("0x");
+	for (int shift = 60; shift >= 0; shift -= 4) {
+		tb375fc_diag_putc("0123456789abcdef"[(v >> shift) & 15]);
+	}
+}
+
+/* User-mode breakpoints/aborts (sleh.c hooks): the first ones are the EL0 crash evidence. */
+#define UFAULT_BUDGET 48u
+static uint32_t ufault_lines;
+
+void
+tb375fc_glue_user_fault(int kind, uint64_t pc, uint64_t lr, uint64_t sp, uint64_t esr, uint64_t far)
+{
+	if (__atomic_fetch_add(&ufault_lines, 1, __ATOMIC_RELAXED) >= UFAULT_BUDGET) {
+		return;
+	}
+	put_str(kind ? "[ufault] abort pc=" : "[ufault] brk pc=");
+	put_hex(pc);
+	put_str(" lr=");
+	put_hex(lr);
+	put_str(" sp=");
+	put_hex(sp);
+	put_str(" esr=");
+	put_hex(esr);
+	if (kind) {
+		put_str(" far=");
+		put_hex(far);
+	}
+	tb375fc_diag_putc('\n');
+}
+
+void
+tb375fc_glue_critical_exit(int pid, const char *msg)
+{
+	put_str("[crit] pid ");
+	put_dec(pid);
+	put_str(": ");
+	put_str(msg ? msg : "?");
+	tb375fc_diag_putc('\n');
+}
+
+/*
+ * BSD syscalls (bsd/dev/arm/systemcalls.c). Every pid prints its first SYS_PER_PID returns (the
+ * first one proves EL0 ran), within a global budget so the console tail keeps earlier lines.
+ * The syscall each pid is currently inside is kept and reported by the poll thread: that is the
+ * wait point when a process stops making progress.
+ */
+#define SYS_PIDS    256
+#define SYS_PER_PID 12u
+#define SYS_BUDGET  420u
+static uint16_t sys_inflight[SYS_PIDS];
+static uint32_t sys_count[SYS_PIDS];
+static char sys_name[SYS_PIDS][17];
+static uint32_t sys_lines;
+static uint64_t sys_total;
+
+void
+tb375fc_glue_syscall(int pid, const char *name, unsigned code, int err, int phase)
+{
+	if (pid < 0 || pid >= SYS_PIDS) {
+		return;
+	}
+	if (phase == 0) {
+		sys_inflight[pid] = (uint16_t)(code + 1);
+		__atomic_fetch_add(&sys_total, 1, __ATOMIC_RELAXED);
+		if (name) {
+			int i = 0;
+			for (; i < 16 && name[i]; i++) {
+				sys_name[pid][i] = name[i];
+			}
+			sys_name[pid][i] = 0;
+		}
+		return;
+	}
+	sys_inflight[pid] = 0;
+	if (__atomic_fetch_add(&sys_count[pid], 1, __ATOMIC_RELAXED) >= SYS_PER_PID) {
+		return;
+	}
+	if (__atomic_fetch_add(&sys_lines, 1, __ATOMIC_RELAXED) >= SYS_BUDGET) {
+		return;
+	}
+	put_str("[sys] ");
+	put_str(name ? name : "?");
+	tb375fc_diag_putc('[');
+	put_dec(pid);
+	put_str("] ");
+	put_dec(code);
+	put_str(" err=");
+	put_dec(err);
+	tb375fc_diag_putc('\n');
+}
+
+static void
+report_waits(unsigned seconds)
+{
+	unsigned shown = 0;
+	put_str("[wait] t=");
+	put_dec(seconds);
+	put_str(" syscalls=");
+	put_dec((int64_t)sys_total);
+	tb375fc_diag_putc('\n');
+	for (int pid = 0; pid < SYS_PIDS && shown < 24; pid++) {
+		unsigned c = sys_inflight[pid];
+		if (!c && !sys_count[pid]) {
+			continue;
+		}
+		put_str("[wait]   ");
+		put_str(sys_name[pid][0] ? sys_name[pid] : "?");
+		tb375fc_diag_putc('[');
+		put_dec(pid);
+		put_str("] n=");
+		put_dec(sys_count[pid]);
+		if (c) {
+			put_str(" in=");
+			put_dec(c - 1);
+		}
+		tb375fc_diag_putc('\n');
+		shown++;
+	}
+}
+
+static void
 poll_thread(__unused void *param, __unused wait_result_t wr)
 {
 	for (unsigned seconds = 0;; seconds++) {
@@ -173,6 +334,9 @@ poll_thread(__unused void *param, __unused wait_result_t wr)
 			__asm__ volatile ("dsb sy" ::: "memory");
 		} else if (wdt && seconds == WDT_PET_SECONDS) {
 			tb375fc_diag_stage("tbdiag watchdog no longer petted");
+		}
+		if (seconds && seconds % 30 == 0) {
+			report_waits(seconds);
 		}
 		IOSleep(1000);
 		tb375fc_diag_poll();

@@ -13,5 +13,6 @@ uke-video-console-text.patch
 # TB375FC mrdump recorder hooks (package/Tb375fcDiag*.c), DEVELOPMENT kernel only
 tb375fc-diag-hooks.patch
 tb375fc-msgbuf-tap.patch
+tb375fc-user-trace.patch
 # Owner-root remains a real crypto/device decision, never an Apple-auth bypass.
 tb375fc-root-binding.patch
