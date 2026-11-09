@@ -70,7 +70,7 @@ jobs:
           GIB: ${{ inputs.gib }}
         run: |
           ./unixnu ipsw fetch OS
-          image=$(python3 - <<'PY'
+          python3 - "$RUNNER_TEMP/os-image-path" <<'PY'
           import sys
           from pathlib import Path
           sys.path.insert(0, 'scripts')
@@ -78,9 +78,10 @@ jobs:
           aea = next(Path('out/ipsw/24A446').glob('*.dmg.aea'), None)
           if aea is None:
               raise SystemExit('OS AEA not fetched')
-          print(decrypt_aea(aea))
+          Path(sys.argv[1]).write_text(str(Path(decrypt_aea(aea)).resolve()))
           PY
-          )
+          image=$(cat "$RUNNER_TEMP/os-image-path")
+          ls -la "$image"
           mkdir -p "$RUNNER_TEMP/os" "$RUNNER_TEMP/seed"
           hdiutil attach -readonly -nobrowse -noverify -owners on -mountpoint "$RUNNER_TEMP/os" "$image"
           python3 scripts/make-data-seed.py "$RUNNER_TEMP/os" "$RUNNER_TEMP/seed/data.dbr" \
