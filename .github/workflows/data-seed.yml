@@ -85,7 +85,7 @@ jobs:
           # seed-data-grow.py keeps its scratch image in build/
           mkdir -p "$RUNNER_TEMP/os" "$RUNNER_TEMP/seed" build
           hdiutil attach -readonly -nobrowse -noverify -owners on -mountpoint "$RUNNER_TEMP/os" "$image"
-          python3 scripts/make-data-seed.py "$RUNNER_TEMP/os" "$RUNNER_TEMP/seed/data.dbr" \
+          python3 ../device/ci/make-data-seed-tb375fc.py "$RUNNER_TEMP/os" "$RUNNER_TEMP/seed/data.dbr" \
             --gib "$GIB" --build 24A446 --skip-setup
           hdiutil detach "$RUNNER_TEMP/os"
           uuid=$(python3 - "$RUNNER_TEMP/seed/data.dbr" <<'PY'
