@@ -1,0 +1,19 @@
+# Bootstrap pass: 4 KiB arm64e XNU, original prelinked families, TB375FC
+# diagnostics and the experimental read-only UFS root adapter.
+# "source" as UniXNU-sheng 27: in prelinked mode the build drops the provider from prng_random.o while
+# native-security-init.patch (OSKext.cpp) still calls it, so the 27.0.1 link fails.
+CONFIG_XNU_CRYPTO_BOOTSTRAP="source"
+CONFIG_XNU_BUILD_ARCHIVES=y
+CONFIG_XNU_SOURCE_CORECRYPTO14=y
+CONFIG_XNU_SOURCE_PTHREAD=y
+CONFIG_XNU_NATIVE_LEGACY_DISPLAY=n
+CONFIG_XNU_ARM_DT_PLATFORM=y
+CONFIG_XNU_ARMCPU=y
+CONFIG_XNU_NATIVE_ARCH_TIMER=y
+CONFIG_XNU_NATIVE_PAN=y
+CONFIG_XNU_NATIVE_MOBILE_DISPLAY=n
+CONFIG_XNU_ARMVIRT_PLATFORM=n
+# weak hooks of the sheng 27 bring-up patches (package/Tb375fcStubs.c)
+CONFIG_XNU_EXTRA_LD_ARCHIVES="-Wl,-force_load,{tree}/build/tb375fc-stubs/libTb375fcStubs.a -Wl,-force_load,{tree}/build/tb375fc-storage/libTb375fcStorage.a"
+# XnuPrelink needs chained fixups + split-segment records in the native kernel (as UniXNU-sheng 27)
+CONFIG_XNU_KERNEL_CHAINED_FIXUPS=y

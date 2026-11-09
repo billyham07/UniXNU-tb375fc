@@ -1,0 +1,13 @@
+.cache/
+build/
+out/
+__pycache__/
+*.py[cod]
+*.key
+*.p12
+*.ipsw
+*.dmg
+*.apfs
+*.im4p
+*.img
+*.cms

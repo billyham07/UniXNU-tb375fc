@@ -1,0 +1,5 @@
+# MT6897 shared layer, kept inside this repository (no separate feed to authenticate).
+[[source]]
+name = "mt6897"
+kind = "soc"
+local = "soc/mt6897"

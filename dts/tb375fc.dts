@@ -1,0 +1,17 @@
+/dts-v1/;
+/include/ "mt6897.dtsi"
+
+/ {
+	model = "Lenovo TB375FC";
+	compatible = "lenovo,tb375fc", "mediatek,mt6897";
+
+	/*
+	 * The ADT generator takes one contiguous range. This is the System RAM run the UEFI
+	 * memory map owns (0x130000000-0x23bc00000, LOS /proc/iomem, no reserved holes);
+	 * it also held the 16.5 route's 4 GiB XNU window.
+	 */
+	memory@130000000 {
+		device_type = "memory";
+		reg = <0x1 0x30000000 0x1 0x0bc00000>;
+	};
+};

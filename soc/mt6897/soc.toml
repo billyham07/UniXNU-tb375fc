@@ -1,0 +1,10 @@
+schema_version = 2
+
+[soc]
+name = "MT6897"
+description = "MediaTek MT6897 / MT8792 (Dimensity 8300 family) shared profile. CPU, GIC, timer and PSCI values from the Lenovo TB375FC device FDT; peripherals are added per board after hardware verification."
+source_repository = "local: Lenovo TB375FC device FDT and the 16.5-route hardware evidence"
+source_revision = "pending"
+
+[components]
+include = []

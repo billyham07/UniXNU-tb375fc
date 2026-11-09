@@ -1,0 +1,15 @@
+# TB375FC xnu-12377 board series. Layout of UniXNU-uke patches/xnu-12377/series: the sheng 27.0.1 core
+# (verbatim from UniXNU-sheng, which defines e.g. unixnu_kernel_stack_shift that XnuPrelink binds),
+# uke video console fixes so the kernel draws on our GOP framebuffer.
+# Sheng/uke trace and diagnostic patches are left out. Apple clang is required;
+# do not drop the authenticates-null-values pointer authentication qualifier.
+zzye-sheng-cpu-idle.patch
+zzyf-sheng-amp.patch
+zzyd-sheng-audio-addon-mount.patch
+source-storage-runtime.patch
+zzzz-sheng-ipados27-bringup.patch
+uke-video-console-physical-fb.patch
+uke-video-console-text.patch
+# TB375FC mrdump recorder hooks (package/Tb375fcDiag*.c), DEVELOPMENT kernel only
+tb375fc-diag-hooks.patch
+tb375fc-msgbuf-tap.patch

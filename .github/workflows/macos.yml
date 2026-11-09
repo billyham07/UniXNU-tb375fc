@@ -1,0 +1,154 @@
+name: TB375FC macOS build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tb375fc-macos-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_INSTALL_CLEANUP: 1
+  HOMEBREW_NO_ENV_HINTS: 1
+  DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+  UNIXNU_DEVICE: ${{ github.workspace }}/device
+  DEFCONFIG: bootstrap_defconfig
+  FRAMEWORK_REVISION: 5dc00d201496a1e7a72d1f5db23f041eb94ace1c
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - name: Check out public device sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: device
+          persist-credentials: false
+
+      - name: Check out pinned public UniXNU
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: UniXNU/UniXNU
+          ref: ${{ env.FRAMEWORK_REVISION }}
+          path: framework
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Install host tools
+        run: |
+          brew install llvm lld mtools dtc openssl@3
+          if ! command -v unifdef >/dev/null; then
+            brew install unifdef
+            echo "$(brew --prefix unifdef)/bin" >> "$GITHUB_PATH"
+          fi
+          echo "OPENSSL=$(brew --prefix openssl@3)/bin/openssl" >> "$GITHUB_ENV"
+
+      - name: Prepare the pinned build
+        id: prepare
+        working-directory: framework
+        run: |
+          test "$(cat ../device/ci/framework-revision)" = "$FRAMEWORK_REVISION"
+          test "$(git rev-parse HEAD)" = "$FRAMEWORK_REVISION"
+          test -d "$DEVELOPER_DIR"
+          git apply ../device/patches/build/prepare-xnu-source.patch
+          ./unixnu defconfig "$DEFCONFIG"
+          python3 - <<'PY'
+          import os, sys
+          sys.path.insert(0, 'scripts')
+          from unixnu.cli import parser
+          from unixnu.config import Context
+          ctx = Context(parser().parse_args(['status']))
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write(f'work={ctx.work}\n')
+          PY
+          xcodebuild -version
+          uname -m
+          df -h "$GITHUB_WORKSPACE"
+
+      - name: Build the arm64e kernel and read-only UFS adapter
+        id: kernel
+        working-directory: framework
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./unixnu build kernel
+
+      # No runner credentials or private key are required. Only the operator's
+      # public certificate is checked in; the mixed kernel never leaves in plaintext.
+      - name: Encrypt the kernel for the operator
+        if: steps.kernel.outcome == 'success'
+        env:
+          WORK: ${{ steps.prepare.outputs.work }}
+        run: |
+          python3 device/ci/seal-build.py "$WORK/kernel" "$RUNNER_TEMP/sealed" device/ci/recipient.pem
+
+      - name: Upload recipient-encrypted kernel
+        if: steps.kernel.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kernel-encrypted-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/sealed/kernel.tar.gz.cms
+            ${{ runner.temp }}/sealed/manifest.json
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Collect text logs
+        id: logs
+        if: always() && steps.prepare.outcome == 'success'
+        env:
+          WORK: ${{ steps.prepare.outputs.work }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          from pathlib import Path
+          destination = Path(os.environ['RUNNER_TEMP']) / 'public-logs'
+          destination.mkdir(exist_ok=True)
+          for source in (Path(os.environ['WORK']) / 'logs').glob('*.log'):
+              raw = source.read_bytes()
+              if b'\0' in raw:
+                  continue
+              text = raw.decode('utf-8', 'replace')
+              text = re.sub(r'https?://[^\s"\']*[?&](?:token|sig|signature|key|X-Amz-Signature)=[^\s"\']*',
+                            '***', text, flags=re.I)
+              (destination / source.name).write_text(text)
+          PY
+
+      - name: Upload text logs only
+        if: always() && steps.logs.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/public-logs/*.log
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Summary
+        if: always()
+        env:
+          RESULT: ${{ steps.kernel.outcome }}
+        run: |
+          {
+            echo "## TB375FC arm64e: ${RESULT:-not-started}"
+            echo "Public sources: $GITHUB_REPOSITORY@$GITHUB_SHA"
+            echo "UniXNU: $FRAMEWORK_REVISION; Xcode 26.6; standard macos-26 runner."
+            echo "Read-only UFS is experimental; build success is not a hardware test."
+            echo "Artifacts contain text logs and recipient-encrypted output only."
+            echo "No IPSW, SDK, plaintext kernel or build cache is published."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove proprietary and plaintext build inputs
+        if: always()
+        run: |
+          rm -rf framework/out "$RUNNER_TEMP/sealed/plain"

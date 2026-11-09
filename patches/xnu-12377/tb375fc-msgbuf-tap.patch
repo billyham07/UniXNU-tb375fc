@@ -1,0 +1,54 @@
+diff --git a/bsd/kern/subr_log.c b/bsd/kern/subr_log.c
+--- a/bsd/kern/subr_log.c
++++ b/bsd/kern/subr_log.c
+@@ -79,6 +79,7 @@
+ #include <os/log_private.h>
+ #include <sys/ioctl.h>
+ #include <sys/msgbuf.h>
++#include <kern/boot_progress.h>
+ #include <sys/file_internal.h>
+ #include <sys/errno.h>
+ #include <sys/select.h>
+@@ -555,6 +556,11 @@ log_putc_locked(struct msgbuf *mbp, char c)
+ 	if (mbp->msg_bufx >= mbp->msg_size) {
+ 		mbp->msg_bufx = 0;
+ 	}
++	/* TB375FC: printf/IOLog still reach msgbuf when the console is muted.
++	 * Copy at the producer (RAM only); never take another BSD log lock. */
++	if (mbp == msgbufp) {
++		boot_progress_msgbuf(c);
++	}
+ }
+ 
+ /*
+diff --git a/osfmk/kern/boot_progress.h b/osfmk/kern/boot_progress.h
+--- a/osfmk/kern/boot_progress.h
++++ b/osfmk/kern/boot_progress.h
+@@ -16,6 +16,7 @@
+ void boot_progress_process_stage(int, const char *, const char *);
+ void boot_progress_exit(int, const char *, int, unsigned, uint64_t);
+ #define boot_progress_tap(c) ((void)0)
++#define boot_progress_msgbuf(c) ((void)0)
+ #define boot_progress_panic(phase) ((void)0)
+ #elif DEVELOPMENT
+ /*
+@@ -28,6 +29,7 @@
+ void tb375fc_glue_start(void);
+ void tb375fc_glue_stage(const char *);
+ void tb375fc_glue_putc(char);
++void tb375fc_glue_msgbuf(char);
+ void tb375fc_glue_process(int, const char *, const char *);
+ void tb375fc_glue_exit(int, const char *, int, unsigned, uint64_t);
+ void tb375fc_glue_panic(int);
+@@ -47,9 +49,11 @@
+ #define boot_progress_process_stage(pid, name, s) tb375fc_glue_process((pid), (name), (s))
+ #define boot_progress_exit(pid, name, rv, ns, code) tb375fc_glue_exit((pid), (name), (rv), (unsigned)(ns), (uint64_t)(code))
+ #define boot_progress_tap(c) tb375fc_glue_putc(c)
++#define boot_progress_msgbuf(c) tb375fc_glue_msgbuf(c)
+ #define boot_progress_panic(phase) tb375fc_glue_panic(phase)
+ #else
+ #define boot_progress_tap(c) ((void)0)
++#define boot_progress_msgbuf(c) ((void)0)
+ #define boot_progress_panic(phase) ((void)0)
+ #define boot_progress_init() ((void)0)
+ #define boot_progress_start() ((void)0)
