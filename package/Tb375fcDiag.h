@@ -37,6 +37,7 @@ uint32_t tb375fc_diag_last_error(void);
  * not storage writes. Shares the recorder's io_lock and DMA descriptors.
  * Returns 0 or negative DIAG error; BUSY never waits and may be retried. */
 int tb375fc_ufs_read_block(uint32_t lba, void *out);
+int tb375fc_ufs_link_hs(int32_t out[6]);
 
 #define TB375FC_DIAG_OK          0u
 #define TB375FC_DIAG_NOT_READY   1u

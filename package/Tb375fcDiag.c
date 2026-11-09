@@ -268,6 +268,93 @@ static int write_block(uint32_t lba, uint64_t deadline)
     return transfer_block(lba, deadline, 0);
 }
 
+/*
+ * UniPro attribute access (UFSHCI 5.6 UIC DME_GET 0x01 / DME_PEER_GET 0x03 / DME_SET 0x02).
+ * Same sequence as the 16.5 XNU driver (devices/tb375fc/drivers/storage/hakios.tb375fc_ufs_ro.c),
+ * verified on this board: devloop 20261107T192245Z, pwrmode 0x11 gear 4 lanes 2/2.
+ */
+static int dme(unsigned op, unsigned attr, uint32_t value, uint32_t *out)
+{
+    uint64_t limit = ticks() + frequency / 10u;
+    while (!(rd(HCS) & 8u)) if (ticks() > limit) return -1;            /* HCS.UCRDY */
+    wr(IS, 1u << 10);                                                   /* IS.UCCS */
+    wr(0x94u, attr << 16); wr(0x98u, 0); wr(0x9cu, value);
+    wr(0x90u, op);
+    limit = ticks() + frequency / 10u;
+    while (!(rd(IS) & (1u << 10))) if (ticks() > limit) return -2;
+    int result = (int)(rd(0x98u) & 255u);
+    if (out) *out = rd(0x9cu);
+    wr(IS, 1u << 10);
+    return result;
+}
+
+/* PA_PWRMODE, then IS.UPMS and HCS.UPMCRS == PWR_LOCAL (ufshcd_uic_change_pwr_mode). */
+static int change_pwr_mode(uint32_t mode)
+{
+    wr(IS, 1u << 4);
+    int e = dme(2, 0x1571, mode, 0);
+    if (e) return 100 + e;
+    uint64_t limit = ticks() + frequency / 2u;
+    while (!(rd(IS) & (1u << 4))) if (ticks() > limit) return -3;
+    wr(IS, 1u << 4);
+    uint32_t upmcrs = (rd(HCS) >> 8) & 7u;
+    return upmcrs == 1 ? 0 : 200 + (int)upmcrs;
+}
+
+/* MT6897 Linux ufs_mtk_pre_pwr_change + ufshcd_change_power_mode (mediatek,ufs-pmc-via-fastauto):
+ * HS-G1B FASTAUTO first, then the target gear FAST with PA_INITIAL_ADAPT for G4+. */
+static int power_mode_hs(uint32_t lanes_tx, uint32_t lanes_rx, uint32_t gear)
+{
+    static const unsigned sync[] = { 0x1552, 0x1554, 0x1556, 0x15d0, 0x15d6 };
+    static const unsigned user[] = { 0x15b0, 0x15b1, 0x15b2, 0x15b3, 0x15b4, 0x15b5, 0xd041, 0xd042, 0xd043 };
+    static const uint32_t userv[] = { 8191, 65535, 32767, 8191, 65535, 32767, 8191, 65535, 32767 };
+    int e;
+#define S(a, v) do { if ((e = dme(2, (a), (v), 0))) return ((a) << 8) | (e & 255); } while (0)
+    for (unsigned i = 0; i < 5; i++) {
+        uint32_t v = 0;
+        if (!dme(1, sync[i], 0, &v) && v < 0x48) S(sync[i], 0x48);
+    }
+    S(0x1569, 1); S(0x1568, 1); S(0x1584, 1); S(0x1583, 1);
+    S(0x1560, lanes_tx); S(0x1580, lanes_rx); S(0x156a, 2); S(0x15d4, 3);
+    for (unsigned i = 0; i < 9; i++) S(user[i], userv[i]);
+    if ((e = change_pwr_mode(0x44))) return 0x10000 | (e & 0xffff);
+    S(0x15d4, gear >= 4 ? 1 : 3);
+    S(0x1583, gear); S(0x1580, lanes_rx); S(0x1584, 1);
+    S(0x1568, gear); S(0x1560, lanes_tx); S(0x1569, 1); S(0x156a, 2);
+    for (unsigned i = 0; i < 9; i++) S(user[i], userv[i]);
+    if ((e = change_pwr_mode(0x11))) return 0x20000 | (e & 0xffff);
+#undef S
+    return 0;
+}
+
+/* Switch LK's PWM-G1 single-lane link (~9 ms per 4 KiB read) to the fastest common HS gear.
+ * out[0..5] = result, pwrmode, txgear, rxgear, active tx lanes, active rx lanes (after). */
+int tb375fc_ufs_link_hs(int32_t out[6])
+{
+    static const unsigned attrs[] = { 0x1571, 0x1568, 0x1583, 0x1560, 0x1580, 0x156a, 0x1561, 0x1581, 0x1587 };
+    uint32_t v[9] = {0}, peer = 0;
+    if (!__atomic_load_n(&enabled, __ATOMIC_ACQUIRE)) return -(int)tb375fc_diag_last_error();
+    uint64_t limit = ticks() + frequency;
+    while (!try_lock(&io_lock)) if (ticks() > limit) return -(int)TB375FC_DIAG_BUSY;
+    int r = 0;
+    for (unsigned i = 0; i < 9 && !r; i++) if (dme(1, attrs[i], 0, &v[i])) r = -10 - (int)i;
+    if (!r && dme(3, 0x1587, 0, &peer)) r = -20;
+    if (!r && v[0] == 0x55 && v[6] && v[7] && v[6] <= 2 && v[7] <= 2 && v[8] && peer) {
+        uint32_t gear = v[8] < peer ? v[8] : peer;
+        if (gear > 5) gear = 5;
+        r = power_mode_hs(v[6], v[7], gear);
+    } else if (!r && v[0] != 0x55) {
+        r = 1;                                  /* already not in PWM: leave it */
+    }
+    for (unsigned i = 0; i < 6; i++) (void)dme(1, attrs[i], 0, &v[i]);
+    wr(IS, rd(IS) & ((1u << 10) | (1u << 4) | UIC_UE));
+    absorb_uic_error();
+    unlock(&io_lock);
+    out[0] = r; out[1] = (int32_t)v[0]; out[2] = (int32_t)v[1]; out[3] = (int32_t)v[2];
+    out[4] = (int32_t)v[3]; out[5] = (int32_t)v[4];
+    return r < 0 ? r : 0;
+}
+
 int tb375fc_ufs_read_block(uint32_t lba, void *out)
 {
     if (!out) return -(int)TB375FC_DIAG_POLICY;

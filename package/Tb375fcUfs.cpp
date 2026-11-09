@@ -63,7 +63,7 @@ class Tb375fcUfs : public IOBlockStorageDevice {
     IOLock *gate = nullptr;
     uint32_t first = 0, blocks = 0;
     bool online = false;
-    uint64_t reads = 0, failures = 0;
+    uint64_t reads = 0, failures = 0, blocksRead = 0;
     uint8_t page[4096] = {};
     vr_view verified = {};
     const uint8_t *envelope = nullptr;
@@ -232,7 +232,11 @@ IOReturn Tb375fcUfs::doAsyncReadWrite(IOMemoryDescriptor *buffer, UInt64 block, 
         done += 4096;
     }
     reads++;
+    blocksRead += done / 4096;
     if (error) failures++;
+    if (!(reads & 4095))
+        IOLog("Tb375fcUfs: lba=%u requests=%llu blocks=%llu failures=%llu
+", first, reads, blocksRead, failures);
     if (reads <= 8 || (error && failures <= 16))
         IOLog("Tb375fcUfs: read=%llu block=%llu count=%llu done=%llu error=%d\n",
             reads, block, count, done, error);
@@ -268,6 +272,13 @@ extern "C" void native_source_storage_start(void)
     if (!PE_parse_boot_argn("tbroot", &enabled, sizeof(enabled)) || enabled != 1 || attempted) return;
     attempted = true;
     skip_ignition_if_requested();
+    unsigned keepPwm = 0;
+    if (!PE_parse_boot_argn("tbufs_pwm", &keepPwm, sizeof(keepPwm)) || !keepPwm) {
+        int32_t link[6] = {};
+        int status = tb375fc_ufs_link_hs(link);
+        IOLog("Tb375fcUfs: link switch status=%d result=0x%x pwrmode=0x%x gear=%d/%d lanes=%d/%d\n",
+            status, link[0], link[1], link[2], link[3], link[4], link[5]);
+    }
     OSReturn status = OSKextLoadKextWithIdentifier("com.apple.iokit.IOStorageFamily");
     if (status != kOSReturnSuccess) panic("TB375FC storage: IOStorageFamily load failed %x", status);
     const OSSymbol *name = OSSymbol::withCString("IOBlockStorageDevice");
