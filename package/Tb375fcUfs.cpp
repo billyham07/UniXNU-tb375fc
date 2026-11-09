@@ -7,6 +7,7 @@
 #include <IOKit/IOLib.h>
 #include <IOKit/IOService.h>
 #include <IOKit/IOPlatformExpert.h>
+#include <IOKit/IODeviceTreeSupport.h>
 #include <IOKit/storage/IOBlockStorageDevice.h>
 #include <libkern/OSKextLib.h>
 #include <mach/kmod.h>
@@ -27,6 +28,7 @@ volatile uint32_t native_ufs_integrity_failures = 0;
 extern kmod_info_t g_kernel_kmod_info;
 extern "C" void tb375fc_storage_base_init(void) __asm__("__GLOBAL__sub_I_IOBlockStorageDevice.cpp");
 extern "C" void tb375fc_storage_disk_init(void) __asm__("__GLOBAL__sub_I_Tb375fcUfs.cpp");
+extern "C" void tb375fc_storage_ram_init(void) __asm__("__GLOBAL__sub_I_NativeRamBlock.cpp");
 extern "C" const OSMetaClass *tb375fc_storage_parent(void);
 extern "C" void native_source_storage_start(void);
 
@@ -50,6 +52,21 @@ static void skip_ignition_if_requested(void)
     dyld_flags |= UINT64_C(8);
     commpage_update_dyld_flags(dyld_flags);
     printf("TB375FC: dyld skip-Ignition set in comm page, dyld_flags=0x%llx\n", (unsigned long long)dyld_flags);
+}
+
+// The Data seed DarwinBoot placed in /chosen/memory-map (UniXNU-sheng package/SourceStorage.cpp start_data_disk):
+// a RAM-backed NativeRamBlock disk whose APFS volume offline-owner-systemos-mount puts on /private/var.
+static void start_data_disk(IOService *provider)
+{
+    IORegistryEntry *map = IORegistryEntry::fromPath("/chosen/memory-map", gIODTPlane);
+    const bool seed = map && (map->getProperty("PackedRAMDisk") || map->getProperty("RAMDisk"));
+    OSSafeReleaseNULL(map);
+    if (!seed) return;
+    IOService *disk = OSDynamicCast(IOService, OSMetaClass::allocClassWithName("NativeRamBlock"));
+    if (!disk) panic("TB375FC storage: cannot allocate the Data disk");
+    const char *step = !disk->init() ? "init" : !disk->attach(provider) ? "attach" : !disk->start(provider) ? "start" : nullptr;
+    if (step) panic("TB375FC storage: Data disk %s failed", step);
+    IOLog("Tb375fcUfs: Data RAM disk started\n");
 }
 
 extern "C" const OSMetaClass *tb375fc_storage_parent(void)
@@ -294,6 +311,7 @@ extern "C" void native_source_storage_start(void)
     if (!handle) panic("TB375FC storage: cannot start class registration");
     tb375fc_storage_base_init();
     tb375fc_storage_disk_init();
+    tb375fc_storage_ram_init();
     status = OSMetaClass::postModLoad(handle);
     if (status != kOSReturnSuccess) panic("TB375FC storage: class registration failed %x", status);
     OSDictionary *matching = IOService::serviceMatching("IOPlatformExpertDevice");
@@ -322,4 +340,5 @@ extern "C" void native_source_storage_start(void)
         if (step) panic("TB375FC storage: %s disk %s failed", w.role, step);
         IOLog("Tb375fcUfs: %s window published through original IOStorageFamily\n", w.role);
     }
+    start_data_disk(provider);
 }

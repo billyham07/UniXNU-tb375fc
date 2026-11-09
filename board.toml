@@ -14,7 +14,7 @@ kit = "tb375fc"
 
 [components]
 # Bootstrap set: the kernel boots on DT/PSCI/GIC/timer and draws on the GOP framebuffer.
-include = ["ArmDTPlatform", "ArmCpu", "XnuPrelink", "DarwinBoot", "GopFramebuffer", "VerifiedRoot"]
+include = ["ArmDTPlatform", "ArmCpu", "XnuPrelink", "DarwinBoot", "GopFramebuffer", "VerifiedRoot", "RamBlock"]
 
 [kernel]
 defconfig = "bootstrap_defconfig"
@@ -56,6 +56,11 @@ chip_id = "0x375FC"
 unique_chip_id = "required"
 owned_memory_size = "0x40000000"
 psci_method = "smc"
+# Data seed RAM disk (ci data-seed workflow, framework make-data-seed.py), mounted on /private/var by
+# offline-owner-systemos-mount before launchd (as UniXNU-sheng). persistent_data keeps the ADT free of
+# ephemeral-storage: with it datamigrator skips every migration and staged system apps never install.
+packed_data_ramdisk = true
+persistent_data = true
 
 [adt.defaults.u32]
 # No Apple PMGR or SEP: report a virtual platform, so AMFI does not wait for an ApplePMGRNub

@@ -52,10 +52,12 @@ anchor_source = OUT / 'root_anchor.c'
 anchor_source.write_text('#include <stdint.h>\nconst uint8_t verified_root_key[] = {' +
     ','.join(str(b) for b in anchor) + '};\n')
 includes = ['-I', str(OUT / 'headers/include'), '-I', str(kit),
-    '-I', str(verified_root / 'include'), '-DNATIVE_VERIFIED_POLICY_HANDOFF=1']
+    '-I', str(verified_root / 'include'), '-I', str(ROOT / 'drivers/RamBlock'),
+    '-I', str(ROOT / '.cache/xnu-work/osfmk'), '-DNATIVE_VERIFIED_POLICY_HANDOFF=1']
 objcopy = shutil.which('llvm-objcopy') or '/opt/homebrew/opt/llvm/bin/llvm-objcopy'
 objects = []
-for path in [base, kit / 'Tb375fcUfs.cpp', kit / 'SourceRootPolicies.cpp',
+ram = ROOT / 'drivers/RamBlock/NativeRamBlock.cpp'
+for path in [base, kit / 'Tb375fcUfs.cpp', ram, kit / 'SourceRootPolicies.cpp',
              kit / 'SourceRootBinding.cpp', verified_root / 'src/verified_root.c',
              verified_root / 'adapters/xnu_crypto.c', anchor_source]:
     obj = OUT / (path.stem + '.o')
@@ -68,7 +70,7 @@ for path in [base, kit / 'Tb375fcUfs.cpp', kit / 'SourceRootPolicies.cpp',
     (OUT / (path.stem + '.log')).write_text(result.stdout)
     if result.returncode:
         raise SystemExit(result.stdout[-10000:])
-    if path in (base, kit / 'Tb375fcUfs.cpp'):
+    if path in (base, kit / 'Tb375fcUfs.cpp', ram):
         late = obj.with_suffix('.late.o')
         subprocess.run([objcopy, '--remove-section=__DATA,__mod_init_func',
                         f'--globalize-symbol=__GLOBAL__sub_I_{path.name}', str(obj), str(late)], check=True)
