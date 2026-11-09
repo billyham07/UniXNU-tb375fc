@@ -235,8 +235,7 @@ IOReturn Tb375fcUfs::doAsyncReadWrite(IOMemoryDescriptor *buffer, UInt64 block, 
     blocksRead += done / 4096;
     if (error) failures++;
     if (!(reads & 4095))
-        IOLog("Tb375fcUfs: lba=%u requests=%llu blocks=%llu failures=%llu
-", first, reads, blocksRead, failures);
+        IOLog("Tb375fcUfs: lba=%u requests=%llu blocks=%llu failures=%llu\n", first, reads, blocksRead, failures);
     if (reads <= 8 || (error && failures <= 16))
         IOLog("Tb375fcUfs: read=%llu block=%llu count=%llu done=%llu error=%d\n",
             reads, block, count, done, error);
