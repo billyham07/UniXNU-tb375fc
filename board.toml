@@ -23,6 +23,9 @@ defconfig = "bootstrap_defconfig"
 archives = ["build-corecrypto-14.py", "build-corecrypto-14.py --namespace", "component:ArmDTPlatform",
             "component:ArmCpu", "build-libpthread-kernel.py",
             # the RELEASE comparison kernel XnuPrelink reads (last, as in UniXNU-sheng)
+            # framework rule for a selected component with a recipe; its libRamBlock.a is not linked
+            # (build-tb375fc-storage.py compiles NativeRamBlock.cpp with late class registration).
+            "component:RamBlock",
             "build-tb375fc-stubs.py", "build-tb375fc-storage.py",
             "build-fileset-release-reference.py --tree . --lto"]
 config_fragments = ["arch:configs/common.config", "soc:configs/mt6897.config", "os:configs/ipados.config"]
