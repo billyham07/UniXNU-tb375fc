@@ -10,11 +10,14 @@ volatile uint32_t boot_log_rounds;
 
 /*
  * Data RAM disk (framework drivers/RamBlock/NativeRamBlock.cpp, XNU_OWNER_DATA_MOUNT):
- *   native_ufs_store_read/write/sync: the optional persistent overlay. NativeRamBlock enables it only when
- *     native_ufs_store_open is also linked; it is not, so Data stays in RAM and these are never called.
+ *   native_ufs_store_*: the optional persistent overlay (RamBlock PersistOverlay.h). mode 0 keeps it off, so
+ *     Data stays in RAM and the others are never called. A tb_ipados store window can implement them later.
  *     The kernel link cannot leave the weak imports undefined.
  *   sheng_boot_watchdog_policy: UniXNU-sheng's launchd job policy after the Data mount; 0 = no policy.
  */
+unsigned native_ufs_store_mode(void);
+int native_ufs_store_open(uint64_t blocks, uint64_t *first, const char **why);
+unsigned native_ufs_store_gpt_check(void);
 int native_ufs_store_read(uint64_t block, uint32_t count, void *data);
 int native_ufs_store_write(uint64_t block, uint32_t count, const void *data);
 int native_ufs_store_sync(void);
@@ -40,5 +43,22 @@ int native_ufs_store_sync(void)
 int sheng_boot_watchdog_policy(void *process, uint64_t scratch)
 {
     (void)process; (void)scratch;
+    return 0;
+}
+
+unsigned native_ufs_store_mode(void)
+{
+    return 0;
+}
+
+int native_ufs_store_open(uint64_t blocks, uint64_t *first, const char **why)
+{
+    (void)blocks; (void)first;
+    if (why) *why = "TB375FC: no persistent Data store yet";
+    return 0;
+}
+
+unsigned native_ufs_store_gpt_check(void)
+{
     return 0;
 }
