@@ -53,9 +53,7 @@ void tb375fc_glue_panic(int);
 void tb375fc_glue_user_fault(int, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 void tb375fc_glue_critical_exit(int, const char *);
 void tb375fc_glue_syscall(int, const char *, unsigned, int, int, const uint64_t *);
-/* bsd/kern/copyio: user pointer -> kernel buffer, returns 0 or errno; safe on bad pointers. */
-extern int copyin(uint64_t uaddr, void *kaddr, size_t len);
-extern int copyinstr(uint64_t uaddr, void *kaddr, size_t len, size_t *done);
+/* copyin()/copyinstr() come from the kernel headers (libkern/copyio.h, kern/misc_protos.h). */
 
 #define PANIC_TAIL 16384u
 
@@ -303,7 +301,7 @@ trace_sysctl(int pid, const char *name, unsigned code, const uint64_t *args)
 		put_str(args[4] ? " set" : " get");
 	} else {
 		char str[64];
-		size_t done = 0;
+		vm_size_t done = 0;
 		if (copyinstr(args[0], str, sizeof(str), &done) == 0 || done) {
 			str[sizeof(str) - 1] = 0;
 			put_str("name=");
