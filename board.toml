@@ -14,7 +14,7 @@ kit = "tb375fc"
 
 [components]
 # Bootstrap set: the kernel boots on DT/PSCI/GIC/timer and draws on the GOP framebuffer.
-include = ["ArmDTPlatform", "ArmCpu", "XnuPrelink", "DarwinBoot", "GopFramebuffer"]
+include = ["ArmDTPlatform", "ArmCpu", "XnuPrelink", "DarwinBoot", "GopFramebuffer", "VerifiedRoot"]
 
 [kernel]
 defconfig = "bootstrap_defconfig"

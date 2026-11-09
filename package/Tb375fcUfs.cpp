@@ -12,6 +12,17 @@
 #include <mach/kmod.h>
 #include <pexpert/pexpert.h>
 #include "Tb375fcDiag.h"
+#include "verified_root.h"
+#include "VerifiedBlockPolicy.h"
+#include <libkern/crypto/sha2.h>
+
+extern "C" {
+extern const uint8_t verified_root_key[VR_KEY_BYTES];
+extern const struct vr_crypto vr_xnu_crypto;
+bool native_source_root_policies_load(void);
+int native_ufs_block_authenticates(IOService *, const char *, uint8_t *);
+volatile uint32_t native_ufs_integrity_failures = 0;
+}
 
 extern kmod_info_t g_kernel_kmod_info;
 extern "C" void tb375fc_storage_base_init(void) __asm__("__GLOBAL__sub_I_IOBlockStorageDevice.cpp");
@@ -34,17 +45,71 @@ class Tb375fcUfs : public IOBlockStorageDevice {
     bool online = false;
     uint64_t reads = 0, failures = 0;
     uint8_t page[4096] = {};
+    vr_view verified = {};
+    const uint8_t *envelope = nullptr;
+    uint64_t envelopeBytes = 0;
+
+    bool configureVerification() {
+        unsigned matches = 0;
+        for (uint64_t i = 0; i < verified_root_policy_count; i++) {
+            const auto &policy = verified_root_policies[i];
+            vr_view candidate = {};
+            int status = vr_open(policy.manifest, policy.manifestBytes, verified_root_key,
+                1, &vr_xnu_crypto, &candidate);
+            if (status != VR_OK) return false;
+            if (candidate.image_bytes != (uint64_t)blocks * 4096) continue;
+            if (++matches != 1) return false;
+            verified = candidate;
+            envelope = policy.manifest;
+            envelopeBytes = policy.manifestBytes;
+        }
+        return matches == 1 && verified.hashes;
+    }
 
     int readOne(uint32_t lba) {
+        if (!verified.hashes || lba < first || lba - first >= blocks ||
+            __atomic_load_n(&native_ufs_integrity_failures, __ATOMIC_ACQUIRE)) return -1;
         int error;
         for (unsigned retry = 0;; retry++) {
             error = tb375fc_ufs_read_block(lba, page);
             if (error != -(int)TB375FC_DIAG_BUSY || retry >= 1000) break;
             IOSleep(1);  // recorder owns the same transfer list; never take it over
         }
+        if (!error) {
+            int status = vr_verify_block(&verified, lba - first, page, sizeof(page), &vr_xnu_crypto);
+            if (status != VR_OK) {
+                __atomic_fetch_add(&native_ufs_integrity_failures, 1u, __ATOMIC_ACQ_REL);
+                online = false;
+                IOLog("Tb375fcRoot: block integrity rejected index=%u status=%d\n", lba - first, status);
+                return -100 - status;
+            }
+        }
         return error;
     }
 public:
+    bool authenticatesVolume(const char *uuid, uint8_t *digest) {
+        if (!uuid || !gate) return false;
+        IOLockLock(gate);
+        char expected[37];
+        static const char hex[] = "0123456789ABCDEF";
+        unsigned at = 0;
+        for (unsigned i = 0; i < 16; i++) {
+            if (i == 4 || i == 6 || i == 8 || i == 10) expected[at++] = '-';
+            expected[at++] = hex[verified.volume_uuid[i] >> 4];
+            expected[at++] = hex[verified.volume_uuid[i] & 15];
+        }
+        expected[at] = 0;
+        bool valid = online && verified.hashes && envelope && !strcmp(uuid, expected) &&
+            !__atomic_load_n(&native_ufs_integrity_failures, __ATOMIC_ACQUIRE);
+        if (valid && digest) {
+            SHA384_CTX context;
+            SHA384_Init(&context);
+            SHA384_Update(&context, envelope, envelopeBytes);
+            SHA384_Final(digest, &context);
+        }
+        IOLockUnlock(gate);
+        return valid;
+    }
     bool start(IOService *) override;
     void stop(IOService *) override;
     void free() override;
@@ -85,6 +150,11 @@ bool Tb375fcUfs::start(IOService *provider)
     }
     gate = IOLockAlloc();
     if (!gate) return false;
+    if (!configureVerification()) {
+        IOLog("Tb375fcRoot: no unique authenticated policy for %u blocks\n", blocks);
+        return false;
+    }
+    IOLog("Tb375fcRoot: RSA signature/hash table accepted; verifying every 4KiB read\n");
     int error = readOne(first);
     if (error) {
         IOLog("Tb375fcUfs: first READ(10) failed lba=%u error=%d\n", first, error);
@@ -137,6 +207,13 @@ void Tb375fcUfs::free()
     IOBlockStorageDevice::free();
 }
 
+extern "C" int native_ufs_block_authenticates(IOService *provider, const char *uuid, uint8_t *digest)
+{
+    Tb375fcUfs *block = OSDynamicCast(Tb375fcUfs, provider);
+    if (!block) return -1;
+    return block->authenticatesVolume(uuid, digest) ? 1 : 0;
+}
+
 extern "C" void native_source_storage_start(void)
 {
     static bool attempted;
@@ -151,6 +228,8 @@ extern "C" void native_source_storage_start(void)
     if (!storageParent || storageParent->getClassSize() != sizeof(IOBlockStorageDevice))
         panic("TB375FC storage: base size original=%u source=%lu",
             storageParent ? storageParent->getClassSize() : 0, sizeof(IOBlockStorageDevice));
+    if (!native_source_root_policies_load())
+        panic("TB375FC root: signed policy handoff rejected");
     status = OSKextLoadKextWithIdentifier("com.apple.filesystems.apfs");
     if (status != kOSReturnSuccess) panic("TB375FC storage: APFS load failed %x", status);
     void *handle = OSMetaClass::preModLoad(g_kernel_kmod_info.name);

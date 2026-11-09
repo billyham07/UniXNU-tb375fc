@@ -29,6 +29,21 @@ part of this publication.
 - **UniXNU-tb365fc** is the layout/MTK LK-to-UEFI reference, not a source of
   TB375FC peripheral addresses.
 - **UniXNU/RamBlock** provides the IOBlockStorageDevice interface reference.
+- **UniXNU/VerifiedRoot**, catalog-pinned at
+  `974f043d0c71ba2e60331483a41c6c6d35274ee3`, supplies RSA3072/SHA256
+  policy parsing, block verification and the source-XNU crypto adapter.
+- Root-policy handoff and mounted-device queries are adapted from
+  **UniXNU/UniXNU-sheng** (`689400177f93219a38bd7cf5ae2e9f5782adc594`),
+  `package/SourceRootPolicies.cpp` and `package/SourceRootBinding.cpp`.
+  The full envelope is copied read-only before validation. Header-only policies
+  are not supported by this adapter.
+- **none24smu/UniXNU**, `ios26-ufs-owner-root` at
+  `a8b90c0c645fd62ae850cd43e80c87bab4cc157d`, informed the mounted/rootdev
+  equality, read-only media and integrity-failure-latch requirements. Its
+  transport, non-PAC profile and userdata rewriting are not imported.
+- **mouseos/UniXNU-a04br3** (`a8905ba`) is the independent owner-public-key
+  build integration reference. All these UniXNU components retain their
+  BSD-2-Clause-Patent licenses.
 - Apple open-source **XNU**, **IOStorageFamily**, **IOHIDFamily**, libpthread,
   libdispatch and other dependencies are fetched at recorded commits, not
   vendored as binaries. The IOStorageFamily pin is

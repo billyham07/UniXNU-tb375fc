@@ -3,7 +3,8 @@
 
 Late base-class registration and constructor extraction follow UniXNU's
 scripts/build-sheng-source-storage.py. Original IOStorageFamily/APFS stay in
-kernelcache; no Qualcomm storage, VerifiedRoot policy or Data writer is linked.
+kernelcache; no Qualcomm transport or Data writer is linked. VerifiedRoot and
+its source-corecrypto adapter authenticate immutable firmware policy handoff.
 """
 import importlib.util
 import json
@@ -41,28 +42,43 @@ OSDefineOperatorMethods(IOBlockStorageDevice)
 '''))
 record_path = ROOT / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/iokit/DEVELOPMENT/IOPlatformExpert.cpo.json'
 record = json.loads(record_path.read_text().strip().rstrip(','))
+c_record_path = ROOT / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/bsd/DEVELOPMENT/bsd_init.o.json'
+c_record = json.loads(c_record_path.read_text().strip().rstrip(','))
 kit = ROOT / 'kits/tb375fc'
-includes = ['-I', str(OUT / 'headers/include'), '-I', str(kit)]
+verified_root = ROOT / 'kits/VerifiedRoot'
+manifest = helper('tb_verified_root_manifest', verified_root / 'tools/manifest.py')
+anchor = manifest.public_anchor(kit / 'root-key/owner-public.pem')
+anchor_source = OUT / 'root_anchor.c'
+anchor_source.write_text('#include <stdint.h>\nconst uint8_t verified_root_key[] = {' +
+    ','.join(str(b) for b in anchor) + '};\n')
+includes = ['-I', str(OUT / 'headers/include'), '-I', str(kit),
+    '-I', str(verified_root / 'include'), '-DNATIVE_VERIFIED_POLICY_HANDOFF=1']
 objcopy = shutil.which('llvm-objcopy') or '/opt/homebrew/opt/llvm/bin/llvm-objcopy'
 objects = []
-for path in [base, kit / 'Tb375fcUfs.cpp']:
+for path in [base, kit / 'Tb375fcUfs.cpp', kit / 'SourceRootPolicies.cpp',
+             kit / 'SourceRootBinding.cpp', verified_root / 'src/verified_root.c',
+             verified_root / 'adapters/xnu_crypto.c', anchor_source]:
     obj = OUT / (path.stem + '.o')
     flags = ['-Wno-error'] if path == base else []
-    command = build.compile_command(record, path, obj, includes, flags)
+    compile_record = c_record if path.suffix == '.c' else record
+    command = build.compile_command(compile_record, path, obj, includes, flags)
     (OUT / (path.stem + '.command.json')).write_text(json.dumps(command, indent=2))
-    result = subprocess.run(command, cwd=record['directory'], text=True,
+    result = subprocess.run(command, cwd=compile_record['directory'], text=True,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     (OUT / (path.stem + '.log')).write_text(result.stdout)
     if result.returncode:
         raise SystemExit(result.stdout[-10000:])
-    late = obj.with_suffix('.late.o')
-    subprocess.run([objcopy, '--remove-section=__DATA,__mod_init_func',
-                    f'--globalize-symbol=__GLOBAL__sub_I_{path.name}', str(obj), str(late)], check=True)
-    objects.append(str(late))
+    if path in (base, kit / 'Tb375fcUfs.cpp'):
+        late = obj.with_suffix('.late.o')
+        subprocess.run([objcopy, '--remove-section=__DATA,__mod_init_func',
+                        f'--globalize-symbol=__GLOBAL__sub_I_{path.name}', str(obj), str(late)], check=True)
+        obj = late
+    objects.append(str(obj))
 archive = OUT / 'libTb375fcStorage.a'
 archive.unlink(missing_ok=True)
 subprocess.run(['xcrun', 'ar', 'rcs', str(archive), *objects], check=True)
 (OUT / 'report.json').write_text(json.dumps({'archive': str(archive), 'headers': header_report,
     'reference': 'UniXNU/scripts/build-sheng-source-storage.py; UniXNU-sheng/package/SourceStorage.cpp',
-    'readonly': True}, indent=2))
+    'readonly': True, 'per_block_verification': True,
+    'trusted_key_sha256': __import__('hashlib').sha256(anchor).hexdigest()}, indent=2))
 print('PASS:', archive)
