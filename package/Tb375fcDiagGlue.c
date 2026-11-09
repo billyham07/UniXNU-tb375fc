@@ -299,6 +299,16 @@ trace_sysctl(int pid, const char *name, unsigned code, const uint64_t *args)
 		put_str(" len=");
 		put_dec((int64_t)args[1]);
 		put_str(args[4] ? " set" : " get");
+		/* {0,3} is name-to-OID (sysctlbyname in libc): the new buffer is the name. */
+		if (n == 2 && mib[0] == 0 && mib[1] == 3 && args[4]) {
+			char str[64];
+			uint64_t len = args[5] < sizeof(str) - 1 ? args[5] : sizeof(str) - 1;
+			if (copyin(args[4], str, (size_t)len) == 0) {
+				str[len] = 0;
+				put_str(" name=");
+				put_str(str);
+			}
+		}
 	} else {
 		char str[64];
 		vm_size_t done = 0;
