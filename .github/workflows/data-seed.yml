@@ -9,7 +9,7 @@ on:
     inputs:
       gib:
         description: Nominal Data size in GiB (sparse; only written pages use memory)
-        default: "3"
+        default: "2"
 
 permissions:
   contents: read

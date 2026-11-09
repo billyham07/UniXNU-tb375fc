@@ -45,8 +45,10 @@ def main():
         parser.error('not an IPSW OS volume')
     if args.output.exists():
         parser.error('refuse to overwrite an existing installation seed')
-    if not 3 <= args.gib <= 1024:
-        parser.error('--gib must be in 3..1024')
+    # NativeRamBlock serves a seed above 2 GiB only through a persistent store (no volatile mode), so a RAM-only
+    # Data seed must stay at or below 2 GiB.
+    if not 1 <= args.gib <= 1024:
+        parser.error('--gib must be in 1..1024')
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='new-data-', dir=args.output.parent) as td:
         work = Path(td)
