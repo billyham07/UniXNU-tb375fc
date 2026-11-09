@@ -68,6 +68,10 @@ class Tb375fcUfs : public IOBlockStorageDevice {
     vr_view verified = {};
     const uint8_t *envelope = nullptr;
     uint64_t envelopeBytes = 0;
+    // tb_unverified=1: no per-block policy (the full OS + SystemOS hash tables, ~82 MB, do not fit the
+    // 64 MiB boot image). The window is then identified only by its boot-arg volume UUID.
+    bool unverified = false;
+    char volumeUUID[37] = {};
 
     bool configureVerification() {
         unsigned matches = 0;
@@ -87,7 +91,7 @@ class Tb375fcUfs : public IOBlockStorageDevice {
     }
 
     int readOne(uint32_t lba) {
-        if (!verified.hashes || lba < first || lba - first >= blocks ||
+        if ((!verified.hashes && !unverified) || lba < first || lba - first >= blocks ||
             __atomic_load_n(&native_ufs_integrity_failures, __ATOMIC_ACQUIRE)) return -1;
         int error;
         for (unsigned retry = 0;; retry++) {
@@ -95,7 +99,7 @@ class Tb375fcUfs : public IOBlockStorageDevice {
             if (error != -(int)TB375FC_DIAG_BUSY || retry >= 1000) break;
             IOSleep(1);  // recorder owns the same transfer list; never take it over
         }
-        if (!error) {
+        if (!error && !unverified) {
             int status = vr_verify_block(&verified, lba - first, page, sizeof(page), &vr_xnu_crypto);
             if (status != VR_OK) {
                 __atomic_fetch_add(&native_ufs_integrity_failures, 1u, __ATOMIC_ACQ_REL);
@@ -107,7 +111,15 @@ class Tb375fcUfs : public IOBlockStorageDevice {
         return error;
     }
 public:
-    void setWindow(uint32_t lba, uint32_t count) { first = lba; blocks = count; }
+    void setWindow(uint32_t lba, uint32_t count, const char *uuid) {
+        first = lba; blocks = count;
+        if (uuid) {
+            unsigned i = 0;
+            for (; i < 36 && uuid[i]; i++)
+                volumeUUID[i] = (uuid[i] >= 'a' && uuid[i] <= 'f') ? (char)(uuid[i] - 32) : uuid[i];
+            volumeUUID[i] = 0;
+        }
+    }
     bool authenticatesVolume(const char *uuid, uint8_t *digest) {
         if (!uuid || !gate) return false;
         IOLockLock(gate);
@@ -122,6 +134,10 @@ public:
         expected[at] = 0;
         bool valid = online && verified.hashes && envelope && !strcmp(uuid, expected) &&
             !__atomic_load_n(&native_ufs_integrity_failures, __ATOMIC_ACQUIRE);
+        if (unverified) {
+            valid = online && volumeUUID[0] && !strcmp(uuid, volumeUUID);
+            if (valid && digest) memset(digest, 0, 48);
+        }
         if (valid && digest) {
             SHA384_CTX context;
             SHA384_Init(&context);
@@ -171,11 +187,21 @@ bool Tb375fcUfs::start(IOService *provider)
     }
     gate = IOLockAlloc();
     if (!gate) return false;
-    if (!configureVerification()) {
+    unsigned skip = 0;
+    if (PE_parse_boot_argn("tb_unverified", &skip, sizeof(skip)) && skip == 1) {
+        if (strlen(volumeUUID) != 36) {
+            IOLog("Tb375fcUfs: unverified window lba=%u needs its volume UUID boot-arg\n", first);
+            return false;
+        }
+        unverified = true;
+        IOLog("Tb375fcRoot: UNVERIFIED window lba=%u blocks=%u volume=%s (tb_unverified=1)\n",
+            first, blocks, volumeUUID);
+    } else if (!configureVerification()) {
         IOLog("Tb375fcRoot: no unique authenticated policy for %u blocks\n", blocks);
         return false;
+    } else {
+        IOLog("Tb375fcRoot: RSA signature/hash table accepted; verifying every 4KiB read\n");
     }
-    IOLog("Tb375fcRoot: RSA signature/hash table accepted; verifying every 4KiB read\n");
     int error = readOne(first);
     if (error) {
         IOLog("Tb375fcUfs: first READ(10) failed lba=%u error=%d\n", first, error);
@@ -266,9 +292,9 @@ extern "C" void native_source_storage_start(void)
     if (!provider) panic("TB375FC storage: platform root unavailable");
     // One verified read-only window per volume: the root (tbroot_*) and, for the full system,
     // the SystemOS cryptex (tbsys_*) that offline-owner-systemos-mount finds by volume UUID.
-    static const struct { const char *lba, *count, *role; bool required; } windows[] = {
-        {"tbroot_lba", "tbroot_blocks", "root", true},
-        {"tbsys_lba", "tbsys_blocks", "SystemOS", false},
+    static const struct { const char *lba, *count, *uuid, *role; bool required; } windows[] = {
+        {"tbroot_lba", "tbroot_blocks", "tbroot_uuid", "root", true},
+        {"tbsys_lba", "tbsys_blocks", "tbsys_uuid", "SystemOS", false},
     };
     for (const auto &w : windows) {
         uint32_t lba = 0, count = 0;
@@ -278,7 +304,9 @@ extern "C" void native_source_storage_start(void)
         }
         Tb375fcUfs *disk = new Tb375fcUfs;
         if (!disk) panic("TB375FC storage: allocation failed");
-        disk->setWindow(lba, count);
+        char uuid[40] = {};
+        if (!PE_parse_boot_argn(w.uuid, uuid, sizeof(uuid))) uuid[0] = 0;
+        disk->setWindow(lba, count, uuid);
         const char *step = !disk->init(nullptr) ? "init" : !disk->attach(provider) ? "attach" :
             !disk->start(provider) ? "start" : nullptr;
         if (step) panic("TB375FC storage: %s disk %s failed", w.role, step);
