@@ -21,3 +21,9 @@ CONFIG_XNU_ARMVIRT_PLATFORM=n
 CONFIG_XNU_EXTRA_LD_ARCHIVES="-Wl,-force_load,{tree}/build/tb375fc-stubs/libTb375fcStubs.a -Wl,-force_load,{tree}/build/tb375fc-storage/libTb375fcStorage.a"
 # XnuPrelink needs chained fixups + split-segment records in the native kernel (as UniXNU-sheng 27)
 CONFIG_XNU_KERNEL_CHAINED_FIXUPS=y
+# Full iPadOS 27 system (2026-11-09): OS root window + SystemOS cryptex window on tb_ipados (sdc83).
+# offline-owner-systemos-mount finds the verified SystemOS volume by UUID (board root.systemos_volume_uuid),
+# union-mounts it on / and sets the dyld skip-Ignition flag (as UniXNU-sheng sheng_ipados27_defconfig).
+CONFIG_XNU_OWNER_CACHE_MOUNT=y
+CONFIG_XNU_OWNER_CACHE_STARTUP=y
+CONFIG_XNU_OWNER_UNION_SYSTEMOS=y

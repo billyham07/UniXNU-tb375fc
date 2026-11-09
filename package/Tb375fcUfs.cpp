@@ -107,6 +107,7 @@ class Tb375fcUfs : public IOBlockStorageDevice {
         return error;
     }
 public:
+    void setWindow(uint32_t lba, uint32_t count) { first = lba; blocks = count; }
     bool authenticatesVolume(const char *uuid, uint8_t *digest) {
         if (!uuid || !gate) return false;
         IOLockLock(gate);
@@ -159,12 +160,12 @@ OSDefineMetaClassAndStructors(Tb375fcUfs, IOBlockStorageDevice)
 
 bool Tb375fcUfs::start(IOService *provider)
 {
-    if (!IOBlockStorageDevice::start(provider)) return false;
-    if (!PE_parse_boot_argn("tbroot_lba", &first, sizeof(first)) ||
-        !PE_parse_boot_argn("tbroot_blocks", &blocks, sizeof(blocks)) || !blocks) return false;
+    if (!IOBlockStorageDevice::start(provider) || !blocks) return false;
     uint64_t end = (uint64_t)first + blocks;
+    // super unallocated tail, mrdump, tb_ipados (sdc83, split from userdata 2026-11-09)
     if (!((first >= 1492992u && end <= 2803712u) ||
-          (first >= 31170552u && end <= 31236088u))) {
+          (first >= 31170552u && end <= 31236088u) ||
+          (first >= 14393088u && end <= 31170552u))) {
         IOLog("Tb375fcUfs: window refused lba=%u blocks=%u\n", first, blocks);
         return false;
     }
@@ -263,10 +264,24 @@ extern "C" void native_source_storage_start(void)
     IOService *provider = matching ? IOService::waitForMatchingService(matching, 5000000000ULL) : nullptr;
     if (matching) matching->release();
     if (!provider) panic("TB375FC storage: platform root unavailable");
-    Tb375fcUfs *disk = new Tb375fcUfs;
-    if (!disk) panic("TB375FC storage: allocation failed");
-    const char *step = !disk->init(nullptr) ? "init" : !disk->attach(provider) ? "attach" :
-        !disk->start(provider) ? "start" : nullptr;
-    if (step) panic("TB375FC storage: disk %s failed", step);
-    IOLog("Tb375fcUfs: source window published through original IOStorageFamily\n");
+    // One verified read-only window per volume: the root (tbroot_*) and, for the full system,
+    // the SystemOS cryptex (tbsys_*) that offline-owner-systemos-mount finds by volume UUID.
+    static const struct { const char *lba, *count, *role; bool required; } windows[] = {
+        {"tbroot_lba", "tbroot_blocks", "root", true},
+        {"tbsys_lba", "tbsys_blocks", "SystemOS", false},
+    };
+    for (const auto &w : windows) {
+        uint32_t lba = 0, count = 0;
+        if (!PE_parse_boot_argn(w.lba, &lba, sizeof(lba)) || !PE_parse_boot_argn(w.count, &count, sizeof(count))) {
+            if (w.required) panic("TB375FC storage: %s window not configured", w.role);
+            continue;
+        }
+        Tb375fcUfs *disk = new Tb375fcUfs;
+        if (!disk) panic("TB375FC storage: allocation failed");
+        disk->setWindow(lba, count);
+        const char *step = !disk->init(nullptr) ? "init" : !disk->attach(provider) ? "attach" :
+            !disk->start(provider) ? "start" : nullptr;
+        if (step) panic("TB375FC storage: %s disk %s failed", w.role, step);
+        IOLog("Tb375fcUfs: %s window published through original IOStorageFamily\n", w.role);
+    }
 }
