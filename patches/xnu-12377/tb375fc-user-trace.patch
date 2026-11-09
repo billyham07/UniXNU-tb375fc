@@ -12,7 +12,7 @@
  	}
  #endif
  	pid = proc_pid(proc);
-+	boot_progress_syscall_enter(pid, proc->p_comm, code);
++	boot_progress_syscall_enter(pid, proc->p_comm, code, &uthread->uu_arg[0]);
  
  #ifdef CONFIG_IOCOUNT_TRACE
  	uthread->uu_iocount = 0;
@@ -35,15 +35,15 @@
 -#define boot_progress_critical_exit(...) ((void)0)
 +void tb375fc_glue_user_fault(int, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 +void tb375fc_glue_critical_exit(int, const char *);
-+void tb375fc_glue_syscall(int, const char *, unsigned, int, int);
++void tb375fc_glue_syscall(int, const char *, unsigned, int, int, const uint64_t *);
 +/* sleh.c passes arm_saved_state_t *; the accessors are inline there. */
 +#define boot_progress_user_breakpoint(st, esr) \
 +	tb375fc_glue_user_fault(0, get_saved_state_pc(st), get_saved_state_lr(st), get_saved_state_sp(st), (uint64_t)(esr), 0)
 +#define boot_progress_user_abort(st, esr, far) \
 +	tb375fc_glue_user_fault(1, get_saved_state_pc(st), get_saved_state_lr(st), get_saved_state_sp(st), (uint64_t)(esr), (uint64_t)(far))
 +#define boot_progress_critical_exit(pid, buf, len) tb375fc_glue_critical_exit((pid), (buf))
-+#define boot_progress_syscall_enter(pid, name, code) tb375fc_glue_syscall((pid), (name), (unsigned)(code), 0, 0)
-+#define boot_progress_syscall_exit(pid, name, code, err) tb375fc_glue_syscall((pid), (name), (unsigned)(code), (err), 1)
++#define boot_progress_syscall_enter(pid, name, code, args) tb375fc_glue_syscall((pid), (name), (unsigned)(code), 0, 0, (const uint64_t *)(args))
++#define boot_progress_syscall_exit(pid, name, code, err) tb375fc_glue_syscall((pid), (name), (unsigned)(code), (err), 1, 0)
  #define boot_progress_process_stage(pid, name, s) tb375fc_glue_process((pid), (name), (s))
  #define boot_progress_exit(pid, name, rv, ns, code) tb375fc_glue_exit((pid), (name), (rv), (unsigned)(ns), (uint64_t)(code))
  #define boot_progress_tap(c) tb375fc_glue_putc(c)

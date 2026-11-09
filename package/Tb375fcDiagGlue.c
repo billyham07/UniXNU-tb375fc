@@ -52,7 +52,10 @@ void tb375fc_glue_exit(int, const char *, int, unsigned, uint64_t);
 void tb375fc_glue_panic(int);
 void tb375fc_glue_user_fault(int, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 void tb375fc_glue_critical_exit(int, const char *);
-void tb375fc_glue_syscall(int, const char *, unsigned, int, int);
+void tb375fc_glue_syscall(int, const char *, unsigned, int, int, const uint64_t *);
+/* bsd/kern/copyio: user pointer -> kernel buffer, returns 0 or errno; safe on bad pointers. */
+extern int copyin(uint64_t uaddr, void *kaddr, size_t len);
+extern int copyinstr(uint64_t uaddr, void *kaddr, size_t len, size_t *done);
 
 #define PANIC_TAIL 16384u
 
@@ -260,11 +263,67 @@ static char sys_name[SYS_PIDS][17];
 static uint32_t sys_lines;
 static uint64_t sys_total;
 
+/*
+ * __sysctl (202): name = int[namelen] MIB; sysctlbyname (274): name string. launchd sat in 202
+ * forever in devloop 20261109T103639Z, so each call names what it asked for.
+ */
+#define SYSCTL_BUDGET 160u
+static uint32_t sysctl_lines;
+
+static void
+trace_sysctl(int pid, const char *name, unsigned code, const uint64_t *args)
+{
+	if (__atomic_fetch_add(&sysctl_lines, 1, __ATOMIC_RELAXED) >= SYSCTL_BUDGET) {
+		return;
+	}
+	put_str("[sysctl] ");
+	put_str(name ? name : "?");
+	tb375fc_diag_putc('[');
+	put_dec(pid);
+	put_str("] ");
+	if (code == 202) {
+		int mib[12];
+		uint64_t n = args[1];
+		if (n > 12) {
+			n = 12;
+		}
+		if (n && copyin(args[0], mib, (size_t)n * sizeof(int)) == 0) {
+			put_str("mib=");
+			for (uint64_t i = 0; i < n; i++) {
+				if (i) {
+					tb375fc_diag_putc('.');
+				}
+				put_dec(mib[i]);
+			}
+		} else {
+			put_str("mib=<copyin failed>");
+		}
+		put_str(" len=");
+		put_dec((int64_t)args[1]);
+		put_str(args[4] ? " set" : " get");
+	} else {
+		char str[64];
+		size_t done = 0;
+		if (copyinstr(args[0], str, sizeof(str), &done) == 0 || done) {
+			str[sizeof(str) - 1] = 0;
+			put_str("name=");
+			put_str(str);
+		} else {
+			put_str("name=<copyin failed>");
+		}
+		put_str(args[4] ? " set" : " get");
+	}
+	tb375fc_diag_putc('\n');
+}
+
 void
-tb375fc_glue_syscall(int pid, const char *name, unsigned code, int err, int phase)
+tb375fc_glue_syscall(int pid, const char *name, unsigned code, int err, int phase, const uint64_t *args)
 {
 	if (pid < 0 || pid >= SYS_PIDS) {
 		return;
+	}
+	if (phase == 0 && args && (code == 202 || code == 274)) {
+		trace_sysctl(pid, name, code, args);
 	}
 	if (phase == 0) {
 		sys_inflight[pid] = (uint16_t)(code + 1);
