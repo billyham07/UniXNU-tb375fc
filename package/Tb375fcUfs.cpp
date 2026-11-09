@@ -32,6 +32,26 @@ extern "C" void native_source_storage_start(void);
 
 static const OSMetaClass *storageParent;
 
+// xnu: dyld reads its flags from the comm page (osfmk/arm/commpage/commpage.c).
+extern "C" uint64_t dyld_flags;
+extern "C" void commpage_update_dyld_flags(uint64_t);
+
+/*
+ * tb_skip_ignition=1 sets the existing dyld skip-Ignition flag (0x8) before launchd runs, as the
+ * UniXNU offline-owner-systemos-mount.patch does after its SystemOS mount (UniXNU-zeta: dyld_flags=0x8).
+ * Without it launchd blocks in security.mac.img4.ignition_blob: the AppleImage4 handler gate-waits
+ * for a service start this board cannot complete yet (devloop 20261109T114334Z; UniXNU-uke
+ * docs/PROGRESS.md, 2026-11-03).
+ */
+static void skip_ignition_if_requested(void)
+{
+    unsigned skip = 0;
+    if (!PE_parse_boot_argn("tb_skip_ignition", &skip, sizeof(skip)) || skip != 1) return;
+    dyld_flags |= UINT64_C(8);
+    commpage_update_dyld_flags(dyld_flags);
+    printf("TB375FC: dyld skip-Ignition set in comm page, dyld_flags=0x%llx\n", (unsigned long long)dyld_flags);
+}
+
 extern "C" const OSMetaClass *tb375fc_storage_parent(void)
 {
     if (!storageParent) panic("TB375FC storage: original family not ready");
@@ -220,6 +240,7 @@ extern "C" void native_source_storage_start(void)
     unsigned enabled = 0;
     if (!PE_parse_boot_argn("tbroot", &enabled, sizeof(enabled)) || enabled != 1 || attempted) return;
     attempted = true;
+    skip_ignition_if_requested();
     OSReturn status = OSKextLoadKextWithIdentifier("com.apple.iokit.IOStorageFamily");
     if (status != kOSReturnSuccess) panic("TB375FC storage: IOStorageFamily load failed %x", status);
     const OSSymbol *name = OSSymbol::withCString("IOBlockStorageDevice");

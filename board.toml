@@ -62,12 +62,30 @@ psci_method = "smc"
 # (as UniXNU-sheng/uke 24A446). Without it: "AMFI: No PMGR?" @ConfigurationSettings.cpp:392
 # right after dlil_init (devloop 20261108T165326Z).
 "vmm-present" = 1
+# Root-domain policy input (UniXNU-sheng/uke/j716f): no suspend on this board. AppleImage4 logged
+# "root power domain not yet available: 19" and launchd then blocked reading
+# security.mac.img4.ignition_blob (devloop 20261109T114334Z).
+"sleep-disabled" = 1
 
 [adt.chosen.u32]
 # No CTRR on MT6897: kernel text stays writable by hardware, which XNU must be told (iBoot writes this
 # on Apple SoCs; as UniXNU-sheng). Without it: machine_routines.c:3379 "_unsafe_kernel_text_initialized"
 # at bsd_autoconf (devloop 20261108T170530Z).
 "kernel-ctrr-to-be-enabled" = 0
+
+# AppleImage4 expects a product node (UniXNU-sheng make-sheng-adt.py); buttons as UniXNU-j716f/uke.
+[adt.product.string]
+model = "lenovo,tb375fc"
+
+[adt.buttons.string]
+compatible = "buttons"
+device_type = "buttons"
+
+[adt.buttons.strings]
+button-names = ["hold", "voldown", "volup"]
+
+[adt.buttons.u32]
+home-button-type = 2
 
 [kernel.prelink]
 # Bootstrap: the 27.0.1 regression policy requires native branches that only the sheng display/HID
