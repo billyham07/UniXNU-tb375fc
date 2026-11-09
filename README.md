@@ -7,11 +7,17 @@ profile (xnu-12377, arm64e). This is **not a usable iPadOS distribution**.
 ## Status
 
 - UEFI hands off to XNU on the physical TB375FC.
-- The kernel reaches BSD initialization and root-device selection.
+- The kernel publishes its read-only UFS window and mounts a genuine 24A446
+  RestoreRamDisk APFS volume on the physical device (not the full OS volume).
 - Independent console/msgbuf tails and panic text have been recovered from UFS;
   a watchdog restores the development device after a bounded experiment.
-- The read-only IOKit UFS root adapter in this repository is **experimental**.
-  Compilation and CI results do not establish APFS mount or launchd success.
+- Owner-root authentication has passed physical positive and negative tests:
+  a valid signed root is accepted; a wrong signed UUID, a corrupted physical
+  block and a damaged RSA signature are rejected. Apple root-auth results are
+  not forged. See the source/kernel baseline below.
+- With unchanged same-build v2 Static/System trust-cache modules, the kernel
+  reports `launchd[1] exec process signature accepted`. This is **not proof of
+  EL0 execution, a running launchd, or a usable/full iPadOS system**.
 - Display, touch, keys and the other drivers still need porting on this route.
   Earlier 16.5 experiments are a separate fallback, not this repository's status.
 
@@ -75,6 +81,70 @@ certificate and keep the matching private key off GitHub.
 
 The existing private build repository and its historical artifacts are not
 made public by this project.
+
+## Owner-verified read-only root
+
+The tested kernel is source `59f47a8b346ed8d62d030accb08d53dee1f16193`,
+[encrypted build 42588243189](https://github.com/billyham07/UniXNU-tb375fc/actions/runs/42588243189).
+Device records on 2026-11-09:
+
+| Record | Result |
+| --- | --- |
+| `090705Z` | RSA/table verified, APFS mounted; Apple auth error 80 retained, mounted/selected device 1:2, read-only, owner accepted |
+| `091331Z` | Valid signature and image hashes but wrong signed UUID: owner rejected |
+| `091729Z` | One byte changed in physical block 0: integrity failure, no root publication; original fixture restored |
+| `092948Z` | Original v2 Static/System trust modules: process signature accepted, no panic recorded; EL0 not yet observed |
+| `094112Z` | One RSA signature byte changed: policy handoff rejected before publication |
+
+All five bounded rounds returned to Android and restored boot_a/misc. They use
+an isolated 232 MiB recovery fixture, not the production OS/SystemOS layout.
+Host checks additionally verified all 59392 original blocks and ten actual
+C/RSA positive/negative cases. Neither compilation nor these checks establish
+full-system or UI support.
+
+`tbroot=1` requires a complete `RootPolicies` firmware handoff. The immutable
+copy is authenticated with the compiled owner public key before publication;
+every 4 KiB read is verified before returning data. One integrity failure
+latches the adapter closed. Root acceptance requires the actual mounted BSD
+device to equal the selected root device, exactly one read-only IOMedia,
+its real APFS UUID and a provider chain reaching this verified adapter.
+Missing policies and header-only policies cannot authorize storage.
+
+The owner signing key is **separate from the CI artifact encryption key**.
+Operators using another key must replace `package/root-key/owner-public.pem`
+and rebuild; keep the private key and firmware-derived policy on the operator
+host. Never put either in CI. Using the pinned framework after fetching its
+VerifiedRoot component:
+
+```sh
+python3 kits/VerifiedRoot/tools/manifest.py \
+  --image "$ROOT_APFS" --private-key "$OWNER_PRIVATE_KEY" \
+  --public-key "$UNIXNU_DEVICE/package/root-key/owner-public.pem" \
+  --volume-uuid "$ACTUAL_APFS_UUID" --generation 1 \
+  --output "$PRIVATE_POLICY_DIR"
+python3 - "$PRIVATE_POLICY_DIR" <<'PY'
+from pathlib import Path
+import struct, sys
+p = Path(sys.argv[1])
+b = (p / 'manifest.bin').read_bytes()
+(p / 'root-policies.bin').write_bytes(
+    struct.pack('<8sQQQQQ', b'VROOTB01', 1, 1, 48 + len(b), 48, len(b)) + b)
+PY
+```
+
+Set `root_policies` in the isolated board's existing `[payload]` table to that
+private bundle path, and its root-match UUID to the real APFS volume UUID.
+`tbroot_lba`/`tbroot_blocks` must describe the provisioned read-only window and
+match the signed image size. The compiled minimum generation is 1; no RPMB or
+persistent anti-rollback mechanism is claimed. This is an independent owner
+chain, not Apple personalization or a hardware secure-boot claim.
+
+Use original, pinned trust-cache inputs for execution policy; do not disable
+AMFI or re-sign binaries to conceal a failure. The original recovery trust
+cache is v1 and the current DarwinBoot loader accepts v2 only. The reported
+signature-progress test used the two **unchanged original v2** Static/System
+modules after checking their same-build BuildManifest digests, not a converted
+recovery cache or owner-added hashes.
 
 ## Hardware safety
 
