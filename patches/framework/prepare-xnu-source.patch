@@ -1,0 +1,42 @@
+diff --git a/scripts/prepare-xnu-source.py b/scripts/prepare-xnu-source.py
+index 6949d26..e812634 100755
+--- a/scripts/prepare-xnu-source.py
++++ b/scripts/prepare-xnu-source.py
+@@ -19,12 +19,32 @@ URL = f'https://api.github.com/repos/apple-oss-distributions/xnu/contents/iokit/
+ TOKEN = os.environ.get('GITHUB_TOKEN') or os.environ.get('GH_TOKEN')
+ 
+ 
++LOCAL_GIT = os.environ.get('UNIXNU_XNU_GIT')   # TB375FC local: bare clone holding the Apple xnu tags
++
++
+ def fetch(url):
+-    request = urllib.request.Request(url, headers={'User-Agent': 'unixnu-prepare-xnu-source'})
+-    if TOKEN and urllib.parse.urlsplit(url).hostname in ('api.github.com', 'raw.githubusercontent.com'):
+-        request.add_header('Authorization', f'Bearer {TOKEN}')
+-    with urllib.request.urlopen(request, timeout=30) as response:
+-        return response.read()
++    # TB375FC local change (bin/tb375fc-unixnu-local-fetch.py): local git first, then retries.
++    parts = urllib.parse.urlsplit(url)
++    if LOCAL_GIT and parts.hostname == 'raw.githubusercontent.com':
++        import subprocess
++        _, _, _, ref, path = parts.path.split('/', 4)
++        result = subprocess.run(['git', '-C', LOCAL_GIT, 'show', ref + ':' + urllib.parse.unquote(path)],
++                                capture_output=True)
++        if result.returncode == 0:
++            return result.stdout
++    last = None
++    for attempt in range(6):
++        request = urllib.request.Request(url, headers={'User-Agent': 'unixnu-prepare-xnu-source'})
++        if TOKEN and parts.hostname in ('api.github.com', 'raw.githubusercontent.com'):
++            request.add_header('Authorization', f'Bearer {TOKEN}')
++        try:
++            with urllib.request.urlopen(request, timeout=30) as response:
++                return response.read()
++        except OSError as error:
++            last = error
++            import time
++            time.sleep(2 * (attempt + 1))
++    raise last
+ 
+ 
+ def restore(entry, destination=DESTINATION, tag=TAG):

@@ -36,7 +36,7 @@ git clone https://github.com/billyham07/UniXNU-tb375fc.git device
 git clone https://github.com/UniXNU/UniXNU.git framework
 git -C framework checkout "$(cat device/ci/framework-revision)"
 cd framework
-git apply ../device/patches/build/prepare-xnu-source.patch
+git apply ../device/patches/framework/prepare-xnu-source.patch
 export UNIXNU_DEVICE="$(cd ../device && pwd)"
 ./unixnu defconfig bootstrap_defconfig
 ./unixnu build kernel

@@ -62,7 +62,7 @@ jobs:
           test "$(cat ../device/ci/framework-revision)" = "$FRAMEWORK_REVISION"
           test "$(git rev-parse HEAD)" = "$FRAMEWORK_REVISION"
           test -d "$DEVELOPER_DIR"
-          git apply ../device/patches/build/prepare-xnu-source.patch
+          git apply ../device/patches/framework/prepare-xnu-source.patch
           ./unixnu defconfig "$DEFCONFIG"
           python3 - <<'PY'
           import os, sys
