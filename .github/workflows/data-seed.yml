@@ -82,7 +82,8 @@ jobs:
           PY
           image=$(cat "$RUNNER_TEMP/os-image-path")
           ls -la "$image"
-          mkdir -p "$RUNNER_TEMP/os" "$RUNNER_TEMP/seed"
+          # seed-data-grow.py keeps its scratch image in build/
+          mkdir -p "$RUNNER_TEMP/os" "$RUNNER_TEMP/seed" build
           hdiutil attach -readonly -nobrowse -noverify -owners on -mountpoint "$RUNNER_TEMP/os" "$image"
           python3 scripts/make-data-seed.py "$RUNNER_TEMP/os" "$RUNNER_TEMP/seed/data.dbr" \
             --gib "$GIB" --build 24A446 --skip-setup
@@ -140,4 +141,6 @@ jobs:
 
       - name: Remove proprietary and plaintext inputs
         if: always()
-        run: rm -rf framework/out "$RUNNER_TEMP/seed" "$RUNNER_TEMP/seed.tar.gz" "$RUNNER_TEMP/os"
+        run: |
+          hdiutil detach "$RUNNER_TEMP/os" 2>/dev/null || true
+          rm -rf framework/out framework/build "$RUNNER_TEMP/seed" "$RUNNER_TEMP/seed.tar.gz" "$RUNNER_TEMP/os"
