@@ -165,7 +165,7 @@ extern "C" void native_source_storage_start(void)
     if (!provider) panic("TB375FC storage: platform root unavailable");
     Tb375fcUfs *disk = new Tb375fcUfs;
     if (!disk) panic("TB375FC storage: allocation failed");
-    const char *step = !disk->init() ? "init" : !disk->attach(provider) ? "attach" :
+    const char *step = !disk->init(nullptr) ? "init" : !disk->attach(provider) ? "attach" :
         !disk->start(provider) ? "start" : nullptr;
     if (step) panic("TB375FC storage: disk %s failed", step);
     IOLog("Tb375fcUfs: source window published through original IOStorageFamily\n");
